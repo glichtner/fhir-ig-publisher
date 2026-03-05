@@ -1,0 +1,119 @@
+name: Build With Core Fork
+
+env:
+  DEFAULT_CORE_REPOSITORY: glichtner/org.hl7.fhir.core
+  DEFAULT_CORE_REF: fix-snapshot-contentref-slice-resolution
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_repository:
+        description: "Fork to use for org.hl7.fhir.core (owner/repo)"
+        required: false
+        default: "glichtner/org.hl7.fhir.core"
+      core_ref:
+        description: "Branch, tag, or SHA in org.hl7.fhir.core"
+        required: false
+        default: "fix-snapshot-contentref-slice-resolution"
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout publisher
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Resolve core fork coordinates
+        id: core-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE_REPO="${{ github.event.inputs.core_repository || '' }}"
+          CORE_REF="${{ github.event.inputs.core_ref || '' }}"
+          if [[ -z "$CORE_REPO" ]]; then
+            CORE_REPO="${{ env.DEFAULT_CORE_REPOSITORY }}"
+          fi
+          if [[ -z "$CORE_REF" ]]; then
+            CORE_REF="${{ env.DEFAULT_CORE_REF }}"
+          fi
+          echo "repository=$CORE_REPO" >> "$GITHUB_OUTPUT"
+          echo "ref=$CORE_REF" >> "$GITHUB_OUTPUT"
+          echo "Using org.hl7.fhir.core repository: $CORE_REPO"
+          echo "Using org.hl7.fhir.core ref: $CORE_REF"
+
+      - name: Checkout org.hl7.fhir.core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.core-target.outputs.repository }}
+          ref: ${{ steps.core-target.outputs.ref }}
+          path: org.hl7.fhir.core
+
+      - name: Build and install org.hl7.fhir.core
+        working-directory: org.hl7.fhir.core
+        run: mvn -B -ntp -DskipTests clean install
+
+      - name: Build fhir-ig-publisher against local core snapshots
+        run: mvn -B -ntp -DskipTests -Dcore_version=6.8.3-SNAPSHOT clean package
+
+      - name: Upload publisher CLI jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: publisher-cli
+          path: org.hl7.fhir.publisher.cli/target/org.hl7.fhir.publisher.cli-*.jar
+
+      - name: Compute release metadata
+        id: release-meta
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLISHER_VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n 1)"
+          CORE_SHA="$(git -C org.hl7.fhir.core rev-parse --short HEAD)"
+          CORE_REF_SAFE="${{ steps.core-target.outputs.ref }}"
+          CORE_REF_SAFE="${CORE_REF_SAFE//\//-}"
+          TAG="publisher-v${PUBLISHER_VERSION}-core-${CORE_REF_SAFE}-${CORE_SHA}"
+          TITLE="IG Publisher ${PUBLISHER_VERSION} (core ${CORE_REF_SAFE}@${CORE_SHA})"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "Automated fork-based build of fhir-ig-publisher against org.hl7.fhir.core."
+            echo
+            echo "- Publisher version: ${PUBLISHER_VERSION}"
+            echo "- Core repository: ${{ steps.core-target.outputs.repository }}"
+            echo "- Core ref: ${{ steps.core-target.outputs.ref }}"
+            echo "- Core commit: ${CORE_SHA}"
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.release-meta.outputs.tag }}" \
+            org.hl7.fhir.publisher.cli/target/org.hl7.fhir.publisher.cli-*.jar \
+            --repo "${{ github.repository }}" \
+            --title "${{ steps.release-meta.outputs.title }}" \
+            --notes "${{ steps.release-meta.outputs.notes }}" \
+            --prerelease

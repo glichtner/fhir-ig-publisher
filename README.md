@@ -54,6 +54,18 @@ To skip unit tests:
 mvn -Dmaven.test.skip install
 ```
 
+To build the publisher against a local checkout of `org.hl7.fhir.core` (including local validator/snapshot changes):
+
+```shell
+cd ../org.hl7.fhir.core
+mvn -DskipTests clean install
+
+cd ../fhir-ig-publisher
+mvn -DskipTests -Dcore_version=6.8.3-SNAPSHOT clean package
+```
+
+Maven resolves from your local `~/.m2` first, so the publisher build will use the locally installed `ca.uhn.hapi.fhir:org.hl7.fhir.*:6.8.3-SNAPSHOT` artifacts.
+
 ## Running this Project
 
 Once built, this project produces an executable publisher jar file: `org.hl7.fhir.publisher.cli/target/org.hl7.fhir.publisher.cli-X.Y.Z-SNAPSHOT.jar`. Detailed documentation on its features and common use cases are located in the [Confluence Documentation](https://confluence.hl7.org/display/FHIR/IG+Publisher+Documentation), including instructions on how to run the publisher from your IDE.
@@ -96,6 +108,10 @@ The built binary for the FHIR IG publisher is released through [GitHub releases]
 ## CI/CD
 
 All integration and delivery done on Azure pipelines. Azure project can be viewed [here][Link-AzureProject].
+
+For fork-to-fork development with unmerged `org.hl7.fhir.core` changes, a GitHub Actions workflow is also available:
+
+* **Build With Core Fork** builds `org.hl7.fhir.core` from a selected fork/ref, installs it into the workflow's local Maven repository, then builds this publisher against those snapshots. [[source]](.github/workflows/build-with-core-fork.yml)
 
 * **Pull Request Pipeline** is automatically run for every Pull Request to ensure that the project can be built by maven. [[Azure Pipeline]][Link-AzurePullRequestPipeline] [[source]](pull-request-pipeline.yml)
 * **Master Branch Pipeline** is automatically run whenever code is merged to the master branch and builds the SNAPSHOT binaries distributed to OSSRH [[Azure Pipeline]][Link-AzureMasterPipeline][[source]](master-branch-pipeline.yml)
