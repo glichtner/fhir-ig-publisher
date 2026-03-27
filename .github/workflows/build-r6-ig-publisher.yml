@@ -105,7 +105,7 @@ jobs:
           echo "Generating R6 model code from FHIR version: $R6_VERSION"
           mvn exec:java \
             -Dexec.mainClass="org.hl7.fhir.core.generator.engine.JavaCoreGenerator" \
-            -Dexec.args="${R6_VERSION} ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.core.generator/configuration ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.r6"
+            -Dexec.args="${R6_VERSION} ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.core.generator/configuration ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.r6 --skip-extensions"
 
       # --- Update dependent modules to use R6 ---
       - name: Update convertors module for R6
