@@ -1,0 +1,169 @@
+name: Build IG Publisher with FHIR R6
+
+on:
+  workflow_dispatch:
+    inputs:
+      r6_source:
+        description: 'R6 FHIR definitions source'
+        required: true
+        type: choice
+        options:
+          - 'ballot4'
+          - 'ci-build'
+
+jobs:
+  build-r6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # --- Setup ---
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # --- Checkout repos ---
+      - name: Checkout fhir-ig-publisher
+        uses: actions/checkout@v4
+        with:
+          path: fhir-ig-publisher
+
+      - name: Checkout org.hl7.fhir.core
+        uses: actions/checkout@v4
+        with:
+          repository: glichtner/org.hl7.fhir.core
+          path: org.hl7.fhir.core
+
+      # --- First-pass build of core (existing R5, needed for generator deps) ---
+      - name: Build org.hl7.fhir.core (first pass)
+        working-directory: org.hl7.fhir.core
+        run: mvn install -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+
+      # --- Prepare R6 FHIR package ---
+      - name: Download CI build package
+        if: inputs.r6_source == 'ci-build'
+        run: |
+          curl -sL https://build.fhir.org/package.tgz -o /tmp/r6-package.tgz
+          mkdir -p /tmp/r6-extract
+          tar xzf /tmp/r6-package.tgz -C /tmp/r6-extract
+          R6_VERSION=$(python3 -c "import json; print(json.load(open('/tmp/r6-extract/package/package.json'))['version'])")
+          echo "R6_VERSION=$R6_VERSION" >> $GITHUB_ENV
+          echo "Detected R6 CI build version: $R6_VERSION"
+          CACHE_DIR="$HOME/.fhir/packages/hl7.fhir.r6.core#${R6_VERSION}"
+          mkdir -p "$CACHE_DIR"
+          cp -r /tmp/r6-extract/* "$CACHE_DIR/"
+
+      - name: Set ballot4 version
+        if: inputs.r6_source == 'ballot4'
+        run: echo "R6_VERSION=6.0.0-ballot4" >> $GITHUB_ENV
+
+      # --- Create org.hl7.fhir.r6 module from r5 ---
+      - name: Create R6 module from R5
+        working-directory: org.hl7.fhir.core
+        run: |
+          echo "=== Copying R5 module to R6 ==="
+          cp -r org.hl7.fhir.r5 org.hl7.fhir.r6
+
+          echo "=== Renaming directory structure ==="
+          mv org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r5 org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6
+          if [ -d org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r5 ]; then
+            mv org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r5 org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r6
+          fi
+
+          echo "=== Replacing package references in Java files ==="
+          find org.hl7.fhir.r6 -name "*.java" -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
+
+          echo "=== Fixing hardcoded string literals ==="
+          find org.hl7.fhir.r6 -name "*.java" \
+            -exec sed -i \
+              -e 's/"hl7\.fhir\.r5\.core"/"hl7.fhir.r6.core"/g' \
+              -e 's|tx\.fhir\.org/r5|tx.fhir.org/r6|g' \
+              -e 's/version = "r5"/version = "r6"/g' {} +
+
+          echo "=== Updating R6 pom.xml ==="
+          sed -i \
+            -e 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
+            -e 's|HL7 Core Artifact - R5|HL7 Core Artifact - R6|g' \
+            org.hl7.fhir.r6/pom.xml
+
+          echo "=== Adding R6 module to root pom.xml ==="
+          sed -i '/<module>org\.hl7\.fhir\.r5<\/module>/a\        <module>org.hl7.fhir.r6</module>' pom.xml
+
+          echo "R6 module created successfully"
+
+      # --- Build and run the code generator ---
+      - name: Build code generator
+        working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
+        run: mvn package -DskipTests --no-transfer-progress
+
+      - name: Run code generator for R6
+        working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
+        run: |
+          echo "Generating R6 model code from FHIR version: $R6_VERSION"
+          mvn exec:java \
+            -Dexec.mainClass="org.hl7.fhir.core.generator.engine.JavaCoreGenerator" \
+            -Dexec.args="${R6_VERSION} ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.core.generator/configuration ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.r6"
+
+      # --- Update dependent modules to use R6 ---
+      - name: Update convertors module for R6
+        working-directory: org.hl7.fhir.core
+        run: |
+          echo "=== Updating convertors Java source ==="
+          find org.hl7.fhir.convertors/src -name "*.java" \
+            -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
+
+          echo "=== Updating convertors pom.xml ==="
+          sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
+            org.hl7.fhir.convertors/pom.xml
+
+      - name: Update validation module for R6
+        working-directory: org.hl7.fhir.core
+        run: |
+          echo "=== Updating validation Java source ==="
+          find org.hl7.fhir.validation/src -name "*.java" \
+            -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
+
+          echo "=== Updating validation pom.xml ==="
+          sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
+            org.hl7.fhir.validation/pom.xml
+
+      - name: Update validation.cli module for R6
+        working-directory: org.hl7.fhir.core
+        run: |
+          echo "=== Updating validation.cli Java source ==="
+          find org.hl7.fhir.validation.cli/src -name "*.java" \
+            -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
+
+          echo "=== Updating validation.cli pom.xml ==="
+          sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
+            org.hl7.fhir.validation.cli/pom.xml
+
+      - name: Update fhir-ig-publisher for R6
+        run: |
+          echo "=== Updating ig-publisher Java source ==="
+          find fhir-ig-publisher -name "*.java" \
+            -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
+
+          echo "=== Updating ig-publisher parent pom.xml ==="
+          sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
+            fhir-ig-publisher/pom.xml
+
+      # --- Rebuild everything with R6 ---
+      - name: Rebuild org.hl7.fhir.core with R6
+        working-directory: org.hl7.fhir.core
+        run: mvn install -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+
+      - name: Build fhir-ig-publisher
+        working-directory: fhir-ig-publisher
+        run: mvn package -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+
+      # --- Upload artifacts ---
+      - name: Upload IG Publisher CLI jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: ig-publisher-r6-${{ inputs.r6_source }}
+          path: fhir-ig-publisher/org.hl7.fhir.publisher.cli/target/*.jar
+          retention-days: 30
