@@ -17,15 +17,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # --- Setup ---
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'maven'
-
-      # --- Checkout repos ---
+      # --- Checkout repos (before setup-java so cache can find pom.xml) ---
       - name: Checkout fhir-ig-publisher
         uses: actions/checkout@v4
         with:
@@ -36,6 +28,14 @@ jobs:
         with:
           repository: glichtner/org.hl7.fhir.core
           path: org.hl7.fhir.core
+
+      # --- Setup ---
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
 
       # --- First-pass build of core (existing R5, needed for generator deps) ---
       - name: Build org.hl7.fhir.core (first pass)
