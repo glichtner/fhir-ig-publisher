@@ -20,6 +20,11 @@ on:
   push:
     branches: [master]
 
+env:
+  # Resolve effective r6_source: dispatch input wins, otherwise default to 'committed' for push.
+  R6_SOURCE: ${{ inputs.r6_source || 'committed' }}
+  CORE_BRANCH: ${{ inputs.core_branch || 'master' }}
+
 jobs:
   build-r6:
     runs-on: ubuntu-latest
@@ -36,7 +41,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: glichtner/org.hl7.fhir.core
-          ref: ${{ inputs.core_branch || 'master' }}
+          ref: ${{ env.CORE_BRANCH }}
           path: org.hl7.fhir.core
 
       # --- Setup ---
@@ -47,9 +52,17 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # --- Install core dependencies first (needed by both generator and r6 module) ---
+      - name: Install core dependencies (utilities, r4, r4b, r5)
+        working-directory: org.hl7.fhir.core
+        run: |
+          for m in org.hl7.fhir.utilities org.hl7.fhir.r4 org.hl7.fhir.r4b org.hl7.fhir.r5; do
+            mvn install -pl "$m" -am -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
+          done
+
       # --- Optional: refresh model from latest ballot4 / ci-build ---
       - name: Download CI build package
-        if: inputs.r6_source == 'ci-build'
+        if: env.R6_SOURCE == 'ci-build'
         run: |
           curl -sL https://build.fhir.org/package.tgz -o /tmp/r6-package.tgz
           mkdir -p /tmp/r6-extract
@@ -62,16 +75,16 @@ jobs:
           cp -r /tmp/r6-extract/* "$CACHE_DIR/"
 
       - name: Set ballot4 version
-        if: inputs.r6_source == 'ballot4'
+        if: env.R6_SOURCE == 'ballot4'
         run: echo "R6_VERSION=6.0.0-ballot4" >> $GITHUB_ENV
 
       - name: Build code generator
-        if: inputs.r6_source != 'committed'
+        if: env.R6_SOURCE != 'committed'
         working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
         run: mvn package -DskipTests --no-transfer-progress
 
       - name: Refresh R6 model from generator
-        if: inputs.r6_source != 'committed'
+        if: env.R6_SOURCE != 'committed'
         working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
         run: |
           echo "Regenerating R6 model code from FHIR version: $R6_VERSION"
@@ -80,14 +93,11 @@ jobs:
             -Dexec.args="${R6_VERSION} ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.core.generator/configuration ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.r6 --skip-extensions"
 
       - name: Apply post-generation patches
-        if: inputs.r6_source != 'committed'
+        if: env.R6_SOURCE != 'committed'
         working-directory: org.hl7.fhir.core
         run: |
-          echo "=== Post-generation patches required when refreshing model from ballot4/ci-build ==="
-          echo "See HANDOVER_R6_CI.md §6 for the full list."
-          echo "TODO: extract patches into a script (e.g. scripts/patch-r6-generated.sh) and invoke here."
-          echo "For now, with r6_source=committed (default) this step is skipped."
-          # Minimal automated patches that always apply:
+          echo "=== Post-generation patches (refresh mode only) ==="
+          echo "See HANDOVER_R6_CI.md §6 for the full list. Below applies a minimal subset."
           # 1. Ensure Utilities import is present in Enumerations.java
           if ! grep -q "import org.hl7.fhir.utilities.Utilities;" \
               org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6/model/Enumerations.java; then
@@ -102,11 +112,7 @@ jobs:
       # --- Verify R6 module compiles (sanity check) ---
       - name: Verify org.hl7.fhir.r6 compiles
         working-directory: org.hl7.fhir.core
-        run: |
-          for m in org.hl7.fhir.utilities org.hl7.fhir.r4 org.hl7.fhir.r4b org.hl7.fhir.r5; do
-            mvn install -pl "$m" -am -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
-          done
-          mvn install -pl org.hl7.fhir.r6 -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
+        run: mvn install -pl org.hl7.fhir.r6 -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
 
       # --- Update dependent modules to use R6 ---
       - name: Update convertors module for R6
@@ -153,6 +159,6 @@ jobs:
       - name: Upload IG Publisher CLI jar
         uses: actions/upload-artifact@v4
         with:
-          name: ig-publisher-r6-${{ inputs.r6_source || 'committed' }}
+          name: ig-publisher-r6-${{ env.R6_SOURCE }}
           path: fhir-ig-publisher/org.hl7.fhir.publisher.cli/target/*.jar
           retention-days: 30
