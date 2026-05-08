@@ -1,0 +1,94 @@
+name: Sync with upstream
+
+on:
+  schedule:
+    # Every Monday at 06:30 UTC (30 min after core repo, so we can pick up its sync first)
+    - cron: '30 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      UPSTREAM_REPO: HL7/fhir-ig-publisher
+      UPSTREAM_BRANCH: master
+      LOCAL_BRANCH: master
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/${UPSTREAM_REPO}.git
+
+      - name: Fetch upstream
+        run: git fetch upstream ${UPSTREAM_BRANCH}
+
+      - name: Check if behind upstream
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/${UPSTREAM_BRANCH})
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "Fork is $BEHIND commits behind upstream/${UPSTREAM_BRANCH}"
+
+      - name: Create sync branch and attempt merge
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          SYNC_BRANCH="sync/upstream-${DATE}"
+          echo "sync_branch=$SYNC_BRANCH" >> $GITHUB_OUTPUT
+          git checkout -b "$SYNC_BRANCH"
+          if git merge --no-edit upstream/${UPSTREAM_BRANCH}; then
+            echo "merge_status=clean" >> $GITHUB_OUTPUT
+          else
+            echo "merge_status=conflict" >> $GITHUB_OUTPUT
+            git diff --name-only --diff-filter=U > /tmp/conflict-files.txt || true
+            git merge --abort || true
+          fi
+          git push origin "$SYNC_BRANCH"
+
+      - name: Open PR
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BEHIND="${{ steps.check.outputs.behind }}"
+          STATUS="${{ steps.merge.outputs.merge_status }}"
+          BRANCH="${{ steps.merge.outputs.sync_branch }}"
+          TITLE="Sync upstream ($BEHIND commits, $STATUS)"
+          BODY=$(cat <<EOF
+          Automated sync from upstream \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\`.
+
+          - Behind by: $BEHIND commits
+          - Merge status: **$STATUS**
+          EOF
+          )
+          if [ "$STATUS" = "conflict" ] && [ -s /tmp/conflict-files.txt ]; then
+            BODY="$BODY
+
+          Conflicting files:
+          \`\`\`
+          $(cat /tmp/conflict-files.txt)
+          \`\`\`
+
+          Resolve manually, then re-run the R6 build workflow to verify."
+          fi
+          gh pr create \
+            --base "${LOCAL_BRANCH}" \
+            --head "$BRANCH" \
+            --title "$TITLE" \
+            --body "$BODY" || echo "PR may already exist for $BRANCH"

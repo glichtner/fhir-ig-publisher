@@ -8,8 +8,17 @@ on:
         required: true
         type: choice
         options:
+          - 'committed'
           - 'ballot4'
           - 'ci-build'
+        default: 'committed'
+      core_branch:
+        description: 'org.hl7.fhir.core branch'
+        required: false
+        type: string
+        default: 'master'
+  push:
+    branches: [master]
 
 jobs:
   build-r6:
@@ -23,10 +32,11 @@ jobs:
         with:
           path: fhir-ig-publisher
 
-      - name: Checkout org.hl7.fhir.core
+      - name: Checkout org.hl7.fhir.core (with committed r6 module)
         uses: actions/checkout@v4
         with:
           repository: glichtner/org.hl7.fhir.core
+          ref: ${{ inputs.core_branch || 'master' }}
           path: org.hl7.fhir.core
 
       # --- Setup ---
@@ -37,12 +47,7 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # --- First-pass build of core (existing R5, needed for generator deps) ---
-      - name: Build org.hl7.fhir.core (first pass)
-        working-directory: org.hl7.fhir.core
-        run: mvn install -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
-
-      # --- Prepare R6 FHIR package ---
+      # --- Optional: refresh model from latest ballot4 / ci-build ---
       - name: Download CI build package
         if: inputs.r6_source == 'ci-build'
         run: |
@@ -60,101 +65,85 @@ jobs:
         if: inputs.r6_source == 'ballot4'
         run: echo "R6_VERSION=6.0.0-ballot4" >> $GITHUB_ENV
 
-      # --- Create org.hl7.fhir.r6 module from r5 ---
-      - name: Create R6 module from R5
-        working-directory: org.hl7.fhir.core
-        run: |
-          echo "=== Copying R5 module to R6 ==="
-          cp -r org.hl7.fhir.r5 org.hl7.fhir.r6
-
-          echo "=== Renaming directory structure ==="
-          mv org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r5 org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6
-          if [ -d org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r5 ]; then
-            mv org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r5 org.hl7.fhir.r6/src/test/java/org/hl7/fhir/r6
-          fi
-
-          echo "=== Replacing package references in Java files ==="
-          find org.hl7.fhir.r6 -name "*.java" -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
-
-          echo "=== Fixing hardcoded string literals ==="
-          find org.hl7.fhir.r6 -name "*.java" \
-            -exec sed -i \
-              -e 's/"hl7\.fhir\.r5\.core"/"hl7.fhir.r6.core"/g' \
-              -e 's|tx\.fhir\.org/r5|tx.fhir.org/r6|g' \
-              -e 's/version = "r5"/version = "r6"/g' {} +
-
-          echo "=== Updating R6 pom.xml ==="
-          sed -i \
-            -e 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
-            -e 's|HL7 Core Artifact - R5|HL7 Core Artifact - R6|g' \
-            org.hl7.fhir.r6/pom.xml
-
-          echo "=== Adding R6 module to root pom.xml ==="
-          sed -i '/<module>org\.hl7\.fhir\.r5<\/module>/a\        <module>org.hl7.fhir.r6</module>' pom.xml
-
-          echo "R6 module created successfully"
-
-      # --- Build and run the code generator ---
       - name: Build code generator
+        if: inputs.r6_source != 'committed'
         working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
         run: mvn package -DskipTests --no-transfer-progress
 
-      - name: Run code generator for R6
+      - name: Refresh R6 model from generator
+        if: inputs.r6_source != 'committed'
         working-directory: org.hl7.fhir.core/org.hl7.fhir.core.generator
         run: |
-          echo "Generating R6 model code from FHIR version: $R6_VERSION"
+          echo "Regenerating R6 model code from FHIR version: $R6_VERSION"
           mvn exec:java \
             -Dexec.mainClass="org.hl7.fhir.core.generator.engine.JavaCoreGenerator" \
             -Dexec.args="${R6_VERSION} ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.core.generator/configuration ${{ github.workspace }}/org.hl7.fhir.core/org.hl7.fhir.r6 --skip-extensions"
+
+      - name: Apply post-generation patches
+        if: inputs.r6_source != 'committed'
+        working-directory: org.hl7.fhir.core
+        run: |
+          echo "=== Post-generation patches required when refreshing model from ballot4/ci-build ==="
+          echo "See HANDOVER_R6_CI.md §6 for the full list."
+          echo "TODO: extract patches into a script (e.g. scripts/patch-r6-generated.sh) and invoke here."
+          echo "For now, with r6_source=committed (default) this step is skipped."
+          # Minimal automated patches that always apply:
+          # 1. Ensure Utilities import is present in Enumerations.java
+          if ! grep -q "import org.hl7.fhir.utilities.Utilities;" \
+              org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6/model/Enumerations.java; then
+            sed -i '/import org.hl7.fhir.exceptions.FHIRException;/i import org.hl7.fhir.utilities.Utilities;' \
+              org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6/model/Enumerations.java
+          fi
+          # 2. InventoryItem.java rename
+          sed -i 's/CommonLanguagesEnumFactory/AllLanguagesEnumFactory/g; s/CommonLanguages/AllLanguages/g' \
+            org.hl7.fhir.r6/src/main/java/org/hl7/fhir/r6/model/InventoryItem.java || true
+          echo "WARNING: refresh mode is not fully automated; expect compile failures that need manual fixes."
+
+      # --- Verify R6 module compiles (sanity check) ---
+      - name: Verify org.hl7.fhir.r6 compiles
+        working-directory: org.hl7.fhir.core
+        run: |
+          for m in org.hl7.fhir.utilities org.hl7.fhir.r4 org.hl7.fhir.r4b org.hl7.fhir.r5; do
+            mvn install -pl "$m" -am -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
+          done
+          mvn install -pl org.hl7.fhir.r6 -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
 
       # --- Update dependent modules to use R6 ---
       - name: Update convertors module for R6
         working-directory: org.hl7.fhir.core
         run: |
-          echo "=== Updating convertors Java source ==="
           find org.hl7.fhir.convertors/src -name "*.java" \
             -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
-
-          echo "=== Updating convertors pom.xml ==="
           sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
             org.hl7.fhir.convertors/pom.xml
 
       - name: Update validation module for R6
         working-directory: org.hl7.fhir.core
         run: |
-          echo "=== Updating validation Java source ==="
           find org.hl7.fhir.validation/src -name "*.java" \
             -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
-
-          echo "=== Updating validation pom.xml ==="
           sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
             org.hl7.fhir.validation/pom.xml
 
       - name: Update validation.cli module for R6
         working-directory: org.hl7.fhir.core
         run: |
-          echo "=== Updating validation.cli Java source ==="
           find org.hl7.fhir.validation.cli/src -name "*.java" \
             -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
-
-          echo "=== Updating validation.cli pom.xml ==="
           sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
             org.hl7.fhir.validation.cli/pom.xml
 
       - name: Update fhir-ig-publisher for R6
         run: |
-          echo "=== Updating ig-publisher Java source ==="
           find fhir-ig-publisher -name "*.java" \
             -exec sed -i 's/org\.hl7\.fhir\.r5/org.hl7.fhir.r6/g' {} +
-
-          echo "=== Updating ig-publisher parent pom.xml ==="
           sed -i 's|<artifactId>org\.hl7\.fhir\.r5</artifactId>|<artifactId>org.hl7.fhir.r6</artifactId>|g' \
             fhir-ig-publisher/pom.xml
 
       # --- Rebuild everything with R6 ---
       - name: Rebuild org.hl7.fhir.core with R6
         working-directory: org.hl7.fhir.core
-        run: mvn install -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+        run: mvn install -Dmaven.test.skip=true -Dmaven.javadoc.skip=true --no-transfer-progress
 
       - name: Build fhir-ig-publisher
         working-directory: fhir-ig-publisher
@@ -164,6 +153,6 @@ jobs:
       - name: Upload IG Publisher CLI jar
         uses: actions/upload-artifact@v4
         with:
-          name: ig-publisher-r6-${{ inputs.r6_source }}
+          name: ig-publisher-r6-${{ inputs.r6_source || 'committed' }}
           path: fhir-ig-publisher/org.hl7.fhir.publisher.cli/target/*.jar
           retention-days: 30
