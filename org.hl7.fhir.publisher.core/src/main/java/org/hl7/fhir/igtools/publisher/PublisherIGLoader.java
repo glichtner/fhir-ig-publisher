@@ -149,9 +149,9 @@ public class PublisherIGLoader extends PublisherBase {
     if (ini != null) {
       pf.newIg = true;
       initializeFromIg(ini);
-    } else if (isTemplate())
+    } else if (isTemplate()) {
       initializeTemplate();
-    else if (pf.rootDir == null) {
+    } else if (pf.rootDir == null) {
       throw new Error("The IG Publisher was unable to find an ig.ini, and hasn't been configured correctly - needs to know what directory to execute on");
     } else {
       throw new Error("Old style JSON configuration is no longer supported. If you see this, then ig.ini wasn't found in '"+ pf.rootDir +"'");
@@ -791,6 +791,8 @@ public class PublisherIGLoader extends PublisherBase {
           break;
         case "lang-pack":
           pf.setLanguagePack("true".equals(p.getValue()));
+        case "wcag-conformant":
+          pf.setWcagConformant("true".equals(p.getValue()));
         default:
           if (pc.startsWith("wantGen-")) {
             String code = pc.substring(8);
@@ -1796,7 +1798,10 @@ public class PublisherIGLoader extends PublisherBase {
       igm.setName(pi.title());
       igm.setBase(pi.canonical());
       igm.setBase2(PackageHacker.fixPackageUrl(pi.url()));
-      pf.linkSpecMaps.add(new PublisherUtils.LinkedSpecification(igm, pi));
+      PublisherUtils.LinkedSpecification lspec = new PublisherUtils.LinkedSpecification(igm, pi);
+      pf.linkSpecMaps.add(lspec);
+      // load any logical types out of the package
+      lspec.setIndex(org.hl7.fhir.utilities.json.parser.JsonParser.parseObject(pi.load("package", ".index.json")));
     }
   }
 
@@ -2309,6 +2314,7 @@ public class PublisherIGLoader extends PublisherBase {
     pf.rc.setChangeVersion(pf.versionToAnnotate);
     pf.rc.setShowSummaryTable(false);
     pf.rc.setInferResourceConformance(pf.inferResourceConformance);
+    pf.rc.setWcagConformant(pf.isWcagConformant());
     for (FetchedFile f : pf.fileList) {
       for (FetchedResource r : f.getResources()) {
         if (r.getResource() instanceof CanonicalResource) {
@@ -3856,7 +3862,7 @@ public class PublisherIGLoader extends PublisherBase {
           altered = true;
         }
         if (isNewML()) {
-          if (e.canHaveChild("language") && !e.hasChild("language")) {
+          if (e.canHaveChild("language") && !e.hasChild("language") && pf.langPolicy != ValidationPresenter.LanguagePopulationPolicy.NONE) {
             e.setChildValue("language", pf.defaultTranslationLang);
           }
           List<LanguageFileProducer.TranslationUnit> translations = findTranslations(r.fhirType(), r.getId(), r.getErrors());
@@ -4249,6 +4255,7 @@ public class PublisherIGLoader extends PublisherBase {
         }
       }
     } else if (r.fhirType().equals("Bundle")) {
+      boolean altered = false;
       Bundle b = (Bundle) r.getResource();
       if (b == null) {
         try {
@@ -4262,6 +4269,7 @@ public class PublisherIGLoader extends PublisherBase {
         for (Bundle.BundleEntryComponent be : b.getEntry()) {
           if (be.hasResource() && be.getResource().fhirType().equals(type)) {
             CanonicalResource mr = (CanonicalResource) be.getResource();
+            altered = checkCanonicalsForVersions(f, mr, false) || altered;
             if (mr.hasUrl()) {
               if (!mr.hasWebPath()) {
                 this.pf.igpkp.checkForPath(f,  r,  mr, true);
@@ -4272,6 +4280,9 @@ public class PublisherIGLoader extends PublisherBase {
 
           }
         }
+      }
+      if (altered) {
+        r.setElement(convertToElement(r, b));
       }
     }
   }

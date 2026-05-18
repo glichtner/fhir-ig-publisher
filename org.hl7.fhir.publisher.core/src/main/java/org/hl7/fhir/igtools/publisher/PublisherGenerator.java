@@ -1169,32 +1169,54 @@ public class PublisherGenerator extends PublisherBase {
         }
         String html = null;
         if (rX.getLogicalElement() != null) {
-          String rXContentType = rX.getElement().getNamedChildValueSingle("contentType");
-          if (rXContentType.contains("xml")) {
-            org.hl7.fhir.r5.elementmodel.XmlParser xmlParser = new org.hl7.fhir.r5.elementmodel.XmlParser(this.pf.context);
-            XmlXHtmlRenderer xmlXHtmlRenderer = new XmlXHtmlRenderer();
-            xmlXHtmlRenderer.setPrism(true);
-            xmlParser.setElideElements(true);
-            xmlXHtmlRenderer.setAutoNamespaces(true);
-            xmlParser.setLinkResolver(this.pf.igpkp);
-            xmlParser.setShowDecorations(false);
-            if (suppressId(f, rX)) {
-              xmlParser.setIdPolicy(ParserBase.IdRenderingPolicy.NotRoot);
+          // Try to use a specialised renderer for this logical model.
+          String logicalType = rX.getLogicalElement().fhirTypeRoot();
+          RenderingContext xlrc = lrc.copy(false);
+          xlrc.setRules(RenderingContext.GenerationRules.IG_PUBLISHER);
+          ResourceRenderer rr = RendererFactory.factory(logicalType, xlrc);
+
+          if (!(rr instanceof ProfileDrivenRenderer)) {
+            // Has specialised renderer - try to use it.
+            try {
+              ResourceWrapper rw = ResourceWrapper.forResource(xlrc.getContextUtilities(), rX.getLogicalElement());
+              XhtmlNode renderedXhtml = rr.buildNarrative(rw);
+              if (renderedXhtml != null) {
+                html = pfx + new XhtmlComposer(XhtmlComposer.HTML).compose(renderedXhtml);
+              }
+            } catch (Exception ex) {
+              // Specialised renderer failed - fall through to JSON/XML rendering.
             }
-            xmlParser.compose(rX.getLogicalElement(), xmlXHtmlRenderer);
-            html = xmlXHtmlRenderer.toString();
-          } else if (rXContentType.contains("json")) {
-            JsonXhtmlRenderer jsonXhtmlRenderer = new JsonXhtmlRenderer();
-            jsonXhtmlRenderer.setPrism(true);
-            org.hl7.fhir.r5.elementmodel.JsonParser jsonParser = new org.hl7.fhir.r5.elementmodel.JsonParser(this.pf.context);
-            jsonParser.setLinkResolver(this.pf.igpkp);
-            jsonParser.setAllowComments(true);
-            jsonParser.setElideElements(true);
-            if (suppressId(f, rX)) {
-              jsonParser.setIdPolicy(ParserBase.IdRenderingPolicy.NotRoot);
+          }
+
+          if (html == null) {
+            // No specialised renderer or it failed - fall back to JSON/XML rendering.
+            String rXContentType = rX.getElement().getNamedChildValueSingle("contentType");
+            if (rXContentType != null && rXContentType.contains("xml")) {
+              org.hl7.fhir.r5.elementmodel.XmlParser xmlParser = new org.hl7.fhir.r5.elementmodel.XmlParser(this.pf.context);
+              XmlXHtmlRenderer xmlXHtmlRenderer = new XmlXHtmlRenderer();
+              xmlXHtmlRenderer.setPrism(true);
+              xmlParser.setElideElements(true);
+              xmlXHtmlRenderer.setAutoNamespaces(true);
+              xmlParser.setLinkResolver(this.pf.igpkp);
+              xmlParser.setShowDecorations(false);
+              if (suppressId(f, rX)) {
+                xmlParser.setIdPolicy(ParserBase.IdRenderingPolicy.NotRoot);
+              }
+              xmlParser.compose(rX.getLogicalElement(), xmlXHtmlRenderer);
+              html = xmlXHtmlRenderer.toString();
+            } else if (rXContentType != null && rXContentType.contains("json")) {
+              JsonXhtmlRenderer jsonXhtmlRenderer = new JsonXhtmlRenderer();
+              jsonXhtmlRenderer.setPrism(true);
+              org.hl7.fhir.r5.elementmodel.JsonParser jsonParser = new org.hl7.fhir.r5.elementmodel.JsonParser(this.pf.context);
+              jsonParser.setLinkResolver(this.pf.igpkp);
+              jsonParser.setAllowComments(true);
+              jsonParser.setElideElements(true);
+              if (suppressId(f, rX)) {
+                jsonParser.setIdPolicy(ParserBase.IdRenderingPolicy.NotRoot);
+              }
+              jsonParser.compose(rX.getLogicalElement(), jsonXhtmlRenderer);
+              html = jsonXhtmlRenderer.toString();
             }
-            jsonParser.compose(rX.getLogicalElement(), jsonXhtmlRenderer);
-            html = jsonXhtmlRenderer.toString();
           }
         }
         if (html == null) {
@@ -1559,12 +1581,15 @@ public class PublisherGenerator extends PublisherBase {
               }
               f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.WARNING).setTxLink(exp.getTxLink()));
               r.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.WARNING).setTxLink(exp.getTxLink()));
-            } else if (exp.getError().contains("grammar") || exp.getError().contains("enumerated") ) {
+            } else if ( exp.getError().contains("grammar") || exp.getError().contains("enumerated") ) {
               fragmentErrorHtml("ValueSet-"+prefixForContainer+vs.getId()+"-expansion", "This value set cannot be expanded because of the way it is defined - it has an infinite number of members<!-- "+Utilities.escapeXml(exp.getAllErrors().toString())+" -->", "Publication Tooling Error: "+Utilities.escapeXml(exp.getAllErrors().toString()), f.getOutputNames(), start, "expansion", "ValueSet", lang);
-              f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.ERROR).setTxLink(exp.getTxLink()));
+              f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.WARNING).setTxLink(exp.getTxLink()));
             } else if (exp.getError().contains("too many") ) {
-              fragmentErrorHtml("ValueSet-"+prefixForContainer+vs.getId()+"-expansion", "This value set cannot be expanded because the terminology server(s) deemed it too costly to do so<!-- "+Utilities.escapeXml(exp.getAllErrors().toString())+" -->", "Publication Tooling Error: "+Utilities.escapeXml(exp.getAllErrors().toString()), f.getOutputNames(), start, "expansion", "ValueSet", lang);
-              f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.ERROR).setTxLink(exp.getTxLink()));
+              fragmentErrorHtml("ValueSet-" + prefixForContainer + vs.getId() + "-expansion", "This value set cannot be expanded because the terminology server(s) deemed it too costly to do so<!-- " + Utilities.escapeXml(exp.getAllErrors().toString()) + " -->", "Publication Tooling Error: " + Utilities.escapeXml(exp.getAllErrors().toString()), f.getOutputNames(), start, "expansion", "ValueSet", lang);
+              f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '" + vs.getId() + "')", exp.getError(), ValidationMessage.IssueSeverity.WARNING).setTxLink(exp.getTxLink()));
+            } else if (exp.getErrorClass() == TerminologyServiceErrorClass.TOO_COSTLY) {
+              fragmentErrorHtml("ValueSet-" + prefixForContainer + vs.getId() + "-expansion", "This value set cannot be expanded because the terminology server(s) deemed it too costly to do so<!-- " + Utilities.escapeXml(exp.getAllErrors().toString()) + " -->", "Publication Tooling Error: " + Utilities.escapeXml(exp.getAllErrors().toString()), f.getOutputNames(), start, "expansion", "ValueSet", lang);
+              f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '" + vs.getId() + "')", exp.getError(), ValidationMessage.IssueSeverity.WARNING).setTxLink(exp.getTxLink()));
             } else {
               fragmentErrorHtml("ValueSet-"+prefixForContainer+vs.getId()+"-expansion", "No Expansion for this valueset (not supported by Publication Tooling<!-- "+Utilities.escapeXml(exp.getAllErrors().toString())+" -->)", "Publication Tooling Error: "+Utilities.escapeXml(exp.getAllErrors().toString()), f.getOutputNames(), start, "expansion", "ValueSet", lang);
               f.getErrors().add(new ValidationMessage(ValidationMessage.Source.TerminologyEngine, ValidationMessage.IssueType.EXCEPTION, "ValueSet.where(id = '"+vs.getId()+"')", exp.getError(), ValidationMessage.IssueSeverity.ERROR).setTxLink(exp.getTxLink()));
@@ -2804,7 +2829,8 @@ public class PublisherGenerator extends PublisherBase {
     msr.analyse();
     Set<String> types = new HashSet<>();
     for (StructureDefinition sd : pf.context.fetchResourcesByType(StructureDefinition.class)) {
-      if (sd.getUrl().equals("http://hl7.org/fhir/StructureDefinition/Base") || (sd.getDerivation() == StructureDefinition.TypeDerivationRule.SPECIALIZATION && sd.getKind() != StructureDefinition.StructureDefinitionKind.LOGICAL && !types.contains(sd.getType()))) {
+      if (sd.getUrl().equals("http://hl7.org/fhir/StructureDefinition/Base") || (sd.getDerivation() == StructureDefinition.TypeDerivationRule.SPECIALIZATION &&
+              sd.getKind() != StructureDefinition.StructureDefinitionKind.LOGICAL && !types.contains(sd.getType()))) {
         types.add(sd.getType());
         long start = System.currentTimeMillis();
         String src = msr.render(sd);
@@ -6119,7 +6145,12 @@ public class PublisherGenerator extends PublisherBase {
     }
   }
 
-  private String processRefTag(DBBuilder db, String src, FetchedFile f) {
+  private String processRefTag(DBBuilder db, String src, FetchedFile f) throws IOException {
+    boolean named = false;
+    if (src.endsWith("'")) {
+      named = true;
+      src = src.substring(0, src.length()-1);
+    }
     if (Utilities.existsInList(src, "$ver")) {
       switch (src) {
         case "$ver": return this.pf.businessVersion;
@@ -6156,6 +6187,36 @@ public class PublisherGenerator extends PublisherBase {
     for (RelatedIG rig : this.pf.relatedIGs) {
       if (rig.getId().equals(src) && rig.getWebLocation() != null) {
         return "<a href=\""+rig.getWebLocation()+"\">"+Utilities.escapeXml(rig.getTitle())+"</a>";
+      }
+    }
+    for (PublisherUtils.LinkedSpecification lspec : pf.linkSpecMaps) {
+      JsonObject item = null;
+      for (JsonObject t : lspec.getIndex().getJsonObjects("files")) {
+        if (src.equals(t.asString("id")) || src.equals(t.asString("url")) || src.equals(t.asString("type"))) {
+          item = t;
+          break;
+        }
+        if ("specialization".equals(t.asString("derivation")) && t.has("type") && t.asString("type").endsWith("StructureDefinition/"+src)) {
+          item = t;
+          break;
+        }
+      }
+      if (item != null) {
+        JsonObject json = org.hl7.fhir.utilities.json.parser.JsonParser.parseObject(lspec.getNpm().load("package", item.asString("filename")));
+        String page = null;
+        if (json.has("extension")) {
+          for (JsonObject ext : json.getJsonObjects("extension")) {
+            if ("http://hl7.org/fhir/tools/StructureDefinition/web-source".equals(ext.asString("url"))) {
+              page = ext.asString("valueUrl");
+              break;
+            }
+          }
+        }
+        String name = Utilities.escapeXml(named ? src : json.has("name") ? json.asString("name") : json.asString("title"));
+        if (page == null) {
+          page = lspec.getSpm().getPath(json.asString("url"), null, json.asString("resourceType"), json.asString("id"));
+        }
+        return "<a href=\""+page+"\">"+name;
       }
     }
     // use [[~[ so we don't get stuck in a loop
@@ -7107,5 +7168,6 @@ public class PublisherGenerator extends PublisherBase {
     for (ImplementationGuide.ImplementationGuideDefinitionResourceComponent r : ig.getDefinition().getResource())
       ExtensionUtilities.removeExtension(r, ExtensionDefinitions.EXT_IGP_RESOURCE_INFO);
   }
+
 
 }
