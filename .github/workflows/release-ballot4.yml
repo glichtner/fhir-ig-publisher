@@ -1,0 +1,142 @@
+name: Release ballot4 IG Publisher
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'org.hl7.fhir.publisher.core/**'
+      - 'org.hl7.fhir.publisher.cli/**'
+      - 'pom.xml'
+      - '.github/workflows/release-ballot4.yml'
+  workflow_dispatch:
+    inputs:
+      core_tag:
+        description: 'Tag of glichtner/org.hl7.fhir.core release to consume (leave blank for latest)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Read project versions
+        id: ver
+        run: |
+          # IG Publisher version
+          IGP_VERSION=$(mvn -q -Dexpression=project.version -DforceStdout -f pom.xml help:evaluate)
+          echo "igp_version=$IGP_VERSION" >> $GITHUB_OUTPUT
+          # core_version from <properties>
+          CORE_VERSION=$(grep -oE '<core_version>[^<]+</core_version>' pom.xml | head -1 | sed 's/<[^>]*>//g')
+          echo "core_version=$CORE_VERSION" >> $GITHUB_OUTPUT
+          echo "IG Publisher: $IGP_VERSION; core: $CORE_VERSION"
+
+      - name: Resolve core release tag
+        id: coretag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ inputs.core_tag }}" ]; then
+            TAG="${{ inputs.core_tag }}"
+          else
+            TAG=$(gh release list --repo glichtner/org.hl7.fhir.core --limit 50 --json tagName,name \
+                  --jq '.[] | select(.tagName | startswith("r5-ballot4-")) | .tagName' | head -1)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::No core ballot4 release found on glichtner/org.hl7.fhir.core."
+            exit 1
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using core release: $TAG"
+
+      - name: Download core jars from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/core-jars
+          gh release download "${{ steps.coretag.outputs.tag }}" \
+            --repo glichtner/org.hl7.fhir.core \
+            --pattern '*.jar' \
+            --dir /tmp/core-jars
+          ls -la /tmp/core-jars/
+
+      - name: Install core jars into local Maven repo
+        run: |
+          set -e
+          V="${{ steps.ver.outputs.core_version }}"
+          for m in org.hl7.fhir.utilities org.hl7.fhir.r4 org.hl7.fhir.r4b org.hl7.fhir.r5 org.hl7.fhir.convertors org.hl7.fhir.validation; do
+            JAR="/tmp/core-jars/${m}-${V}.jar"
+            if [ ! -f "$JAR" ]; then
+              echo "::error::Missing $JAR — release does not contain it."
+              exit 1
+            fi
+            mvn install:install-file --no-transfer-progress \
+              -Dfile="$JAR" \
+              -DgroupId=ca.uhn.hapi.fhir \
+              -DartifactId="$m" \
+              -Dversion="$V" \
+              -Dpackaging=jar
+          done
+
+      - name: Build IG Publisher
+        run: mvn clean package -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+
+      - name: Identify CLI jar
+        id: jar
+        run: |
+          JAR=$(ls org.hl7.fhir.publisher.cli/target/org.hl7.fhir.publisher.cli-*.jar \
+                | grep -vE 'sources|javadoc|original-' | head -1)
+          echo "path=$JAR" >> $GITHUB_OUTPUT
+          echo "name=$(basename "$JAR")" >> $GITHUB_OUTPUT
+          ls -la "$JAR"
+
+      - name: Build release tag
+        id: tag
+        run: |
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          TAG="ballot4-${STAMP}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "stamp=$STAMP" >> $GITHUB_OUTPUT
+
+      - name: Write release notes
+        run: |
+          cat > /tmp/notes.md <<EOF
+          # IG Publisher with R6 ballot4 support
+
+          Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`
+          Project version: \`${{ steps.ver.outputs.igp_version }}\`
+          Consumed core release: [\`${{ steps.coretag.outputs.tag }}\`](https://github.com/glichtner/org.hl7.fhir.core/releases/tag/${{ steps.coretag.outputs.tag }}) (\`${{ steps.ver.outputs.core_version }}\`)
+
+          ## Run
+
+          \`\`\`bash
+          java -jar ${{ steps.jar.outputs.name }} -ig /path/to/ig.ini
+          \`\`\`
+
+          ## What this fork adds
+          - Allows \`6.0.0-ballot4\` in PublisherIGLoader version whitelist
+          - Null-safe StructureDefinitionRenderer for profiles whose base type doesn't resolve
+          - Consumes the R5 core jars with ballot4 spec deltas applied
+          EOF
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: IG Publisher ballot4 ${{ steps.tag.outputs.stamp }}
+          body_path: /tmp/notes.md
+          files: ${{ steps.jar.outputs.path }}
+          draft: false
+          prerelease: false
