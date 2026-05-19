@@ -706,6 +706,10 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
       String basePath = child.getBase().getPath();
       StructureDefinition baseType = context.fetchResource(StructureDefinition.class,
               "http://hl7.org/fhir/StructureDefinition/" + basePath.substring(0, basePath.indexOf(".")), IWorkerContext.VersionResolutionRules.defaultRule());
+      if (baseType == null || baseType.getSnapshot() == null) {
+        // R6 ballot4 forks: base type may not be resolvable in the R5 worker context; skip this element.
+        continue;
+      }
       ElementDefinition baseElement = null;
       for (ElementDefinition e: baseType.getSnapshot().getElement()) {
         if (e.getPath().equals(basePath)) {
