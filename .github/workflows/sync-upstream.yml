@@ -1,6 +1,11 @@
-name: Sync with upstream (manual)
+name: Sync with upstream
 
 on:
+  # Weekly check: opens a sync PR when upstream has new commits.
+  # Merging the PR triggers release-r6.yml (new publisher release, i.e.
+  # releases/latest moves), so merges are deliberate acts. No auto-merge.
+  schedule:
+    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -62,6 +67,10 @@ jobs:
             "- Behind by: ${{ steps.check.outputs.behind }} commits" \
             "- Our patches ahead: ${{ steps.check.outputs.ahead }} commits" \
             "- Merge status: **${STATUS}**" \
+            "" \
+            "⚠️ Known conflict point: \`<core_version>\` in pom.xml must stay pinned to the" \
+            "glichtner/org.hl7.fhir.core fork version (upstream pins its own releases)." \
+            "Merging to master triggers release-r6.yml, i.e. releases/latest moves." \
             "")
           if [ "$STATUS" = "conflict" ] && [ -s /tmp/conflicts.txt ]; then
             BODY="$BODY
