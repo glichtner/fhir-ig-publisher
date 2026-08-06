@@ -1,0 +1,9 @@
+temp/
+output/
+input-cache/
+template/
+txCache/
+*.tgz
+qa.*
+validation-summary.json
+validation-oo.json

@@ -1,0 +1,67 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "smoke-contact-base",
+  "url": "http://example.org/smoke/StructureDefinition/smoke-contact-base",
+  "version": "0.1.0",
+  "name": "SmokeContactBase",
+  "title": "Smoke: Composition with extension slices",
+  "status": "draft",
+  "fhirVersion": "6.0.0-ballot5",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Composition",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/Composition",
+  "derivation": "constraint",
+  "differential": {
+    "element": [
+      {
+        "id": "Composition",
+        "path": "Composition"
+      },
+      {
+        "id": "Composition.extension",
+        "path": "Composition.extension",
+        "slicing": {
+          "discriminator": [
+            {
+              "type": "value",
+              "path": "url"
+            }
+          ],
+          "ordered": false,
+          "rules": "open"
+        }
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail",
+        "path": "Composition.extension",
+        "sliceName": "extendedContactDetail",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "Extension",
+            "profile": [
+              "http://hl7.org/fhir/StructureDefinition/artifact-extended-contact-detail"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "Composition.extension:publicationDate",
+        "path": "Composition.extension",
+        "sliceName": "publicationDate",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Extension",
+            "profile": [
+              "http://hl7.org/fhir/StructureDefinition/artifact-publicationDate"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

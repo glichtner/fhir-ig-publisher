@@ -58,6 +58,9 @@ jobs:
             STATUS=conflict
             git diff --name-only --diff-filter=U > /tmp/conflicts.txt || true
             git merge --abort || true
+            # push the upstream state as the PR branch so GitHub shows the
+            # conflicting files and the merge can be resolved in the PR
+            git checkout -B "$BRANCH" upstream/${UPSTREAM_BRANCH}
           fi
           git push --force origin "$BRANCH"
           BODY=$(printf '%s\n' \

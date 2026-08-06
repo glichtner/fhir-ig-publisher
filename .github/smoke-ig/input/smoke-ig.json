@@ -1,0 +1,40 @@
+{
+  "resourceType": "ImplementationGuide",
+  "id": "org.example.smoke",
+  "url": "http://example.org/smoke/ImplementationGuide/org.example.smoke",
+  "version": "0.1.0",
+  "name": "SmokeIG",
+  "title": "IG Publisher smoke test IG",
+  "status": "draft",
+  "packageId": "org.example.smoke",
+  "license": "CC0-1.0",
+  "fhirVersion": [
+    "6.0.0-ballot5"
+  ],
+  "definition": {
+    "resource": [
+      {
+        "reference": {
+          "reference": "StructureDefinition/smoke-contact-base"
+        },
+        "name": "SmokeContactBase",
+        "isExample": false
+      },
+      {
+        "reference": {
+          "reference": "StructureDefinition/smoke-contact-slices"
+        },
+        "name": "SmokeContactSlices",
+        "isExample": false
+      }
+    ],
+    "page": {
+      "name": "index.html",
+      "source": {
+        "sourceUrl": "index.html"
+      },
+      "title": "Home",
+      "generation": "markdown"
+    }
+  }
+}

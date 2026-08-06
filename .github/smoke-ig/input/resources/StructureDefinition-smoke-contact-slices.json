@@ -1,0 +1,144 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "smoke-contact-slices",
+  "url": "http://example.org/smoke/StructureDefinition/smoke-contact-slices",
+  "version": "0.1.0",
+  "name": "SmokeContactSlices",
+  "title": "Smoke: re-sliced extendedContactDetail (recursion reproducer)",
+  "description": "Re-slices an extension slice of the parent profile. Reproduces the ProfilePathProcessor infinite recursion triggered by the materialized extension slicing in the raw 6.0.0-ballot5 core package.",
+  "status": "draft",
+  "fhirVersion": "6.0.0-ballot5",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Composition",
+  "baseDefinition": "http://example.org/smoke/StructureDefinition/smoke-contact-base",
+  "derivation": "constraint",
+  "differential": {
+    "element": [
+      {
+        "id": "Composition.extension",
+        "path": "Composition.extension",
+        "slicing": {
+          "discriminator": [
+            {
+              "type": "value",
+              "path": "url"
+            },
+            {
+              "type": "value",
+              "path": "value.ofType(ExtendedContactDetail).purpose"
+            }
+          ],
+          "ordered": false,
+          "rules": "open"
+        }
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail",
+        "path": "Composition.extension",
+        "sliceName": "extendedContactDetail"
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail.value[x].purpose",
+        "path": "Composition.extension.value[x].purpose",
+        "min": 1
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/registrant",
+        "path": "Composition.extension",
+        "sliceName": "extendedContactDetail/registrant",
+        "min": 0,
+        "max": "1",
+        "mustSupport": true
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/registrant.value[x].purpose",
+        "path": "Composition.extension.value[x].purpose",
+        "min": 1,
+        "patternCodeableConcept": {
+          "coding": [
+            {
+              "code": "registrant",
+              "system": "http://fhir.awmf.org/awmf.ig/CodeSystem/cs-contact-point"
+            }
+          ]
+        }
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/registrant.value[x].name",
+        "path": "Composition.extension.value[x].name",
+        "min": 1,
+        "max": "1"
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/registrant.value[x].telecom.value",
+        "path": "Composition.extension.value[x].telecom.value",
+        "min": 1
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/coordinator",
+        "path": "Composition.extension",
+        "sliceName": "extendedContactDetail/coordinator",
+        "min": 0,
+        "max": "*",
+        "mustSupport": true
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/coordinator.value[x].purpose",
+        "path": "Composition.extension.value[x].purpose",
+        "min": 1,
+        "patternCodeableConcept": {
+          "coding": [
+            {
+              "code": "coordinator",
+              "system": "http://fhir.awmf.org/awmf.ig/CodeSystem/cs-contact-point"
+            }
+          ]
+        }
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/coordinator.value[x].name",
+        "path": "Composition.extension.value[x].name",
+        "min": 1,
+        "max": "1"
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/coordinator.value[x].telecom.value",
+        "path": "Composition.extension.value[x].telecom.value",
+        "min": 1
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/mainContact",
+        "path": "Composition.extension",
+        "sliceName": "extendedContactDetail/mainContact",
+        "min": 0,
+        "max": "1",
+        "mustSupport": true
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/mainContact.value[x].purpose",
+        "path": "Composition.extension.value[x].purpose",
+        "min": 1,
+        "patternCodeableConcept": {
+          "coding": [
+            {
+              "code": "contact",
+              "system": "http://fhir.awmf.org/awmf.ig/CodeSystem/cs-contact-point"
+            }
+          ]
+        }
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/mainContact.value[x].name",
+        "path": "Composition.extension.value[x].name",
+        "min": 1,
+        "max": "1"
+      },
+      {
+        "id": "Composition.extension:extendedContactDetail/mainContact.value[x].telecom.value",
+        "path": "Composition.extension.value[x].telecom.value",
+        "min": 1
+      }
+    ]
+  }
+}

@@ -14,6 +14,7 @@ on:
       - 'org.hl7.fhir.publisher.cli/**'
       - 'pom.xml'
       - '.github/workflows/release-r6.yml'
+      - '.github/smoke-ig/**'
   workflow_dispatch:
     inputs:
       core_tag:
@@ -115,6 +116,26 @@ jobs:
           echo "name=$(basename "$JAR")" >> $GITHUB_OUTPUT
           cp "$JAR" /tmp/publisher.jar
           ls -la "$JAR"
+
+      # Smoke test: build a minimal ballot5 IG with the freshly built jar
+      # before publishing the release. The fixture's profile pair re-slices an
+      # extension slice (the pattern that exposed the ballot5 snapshot
+      # recursion), so this exercises the version whitelist, package seeding
+      # (incl. the package fixes), snapshot generation and the full render
+      # pipeline. A failure blocks the release.
+      - name: Set up Ruby (for Jekyll)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install Jekyll
+        run: gem install jekyll
+
+      - name: Smoke test the built publisher
+        run: |
+          .github/smoke-ig/seed-packages.sh
+          JAVA_TOOL_OPTIONS="-Xmx4g -Dfile.encoding=UTF-8" \
+            java -jar "${{ steps.jar.outputs.path }}" -ig .github/smoke-ig
 
       - name: Build release tag
         id: tag
