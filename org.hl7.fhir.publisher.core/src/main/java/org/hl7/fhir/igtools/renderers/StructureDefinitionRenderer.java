@@ -2,6 +2,7 @@ package org.hl7.fhir.igtools.renderers;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -58,6 +59,7 @@ import org.hl7.fhir.r5.renderers.StructureDefinitionRenderer.MapStructureMode;
 import org.hl7.fhir.r5.renderers.utils.RenderingContext;
 import org.hl7.fhir.r5.renderers.utils.RenderingContext.StructureDefinitionRendererMode;
 import org.hl7.fhir.r5.renderers.utils.ResourceWrapper;
+import org.hl7.fhir.r5.utils.EOperationOutcome;
 import org.hl7.fhir.r5.utils.ElementDefinitionUtilities;
 import org.hl7.fhir.r5.utils.ElementVisitor;
 import org.hl7.fhir.r5.utils.UserDataNames;
@@ -100,7 +102,9 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
   public static final int GEN_MODE_DIFF = 2;
   public static final int GEN_MODE_MS = 3;
   public static final int GEN_MODE_KEY = 4;
-  public static final String ANCHOR_PREFIX_MAP = "";
+  public static final String ANCHOR_PREFIX_MAP_O = "o";
+  public static final String ANCHOR_PREFIX_MAP_I = "i";
+  public static final String ANCHOR_PREFIX_MAP_E = "e";
   public static final String ANCHOR_PREFIX_SNAP = "";
   public static final String ANCHOR_PREFIX_DIFF = "diff_";
   public static final String ANCHOR_PREFIX_MS = "ms_";
@@ -134,8 +138,8 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
   private org.hl7.fhir.r5.renderers.StructureDefinitionRenderer sdr;
   private ResourceWrapper resE;
 
-  public StructureDefinitionRenderer(IWorkerContext context, String packageId, String corePath, StructureDefinition sd, String destDir, IGKnowledgeProvider igp, List<SpecMapManager> maps, Set<String> allTargets, MarkDownProcessor markdownEngine, NpmPackage packge, List<FetchedFile> files, RenderingContext gen, boolean allInvariants,Map<String, Map<String, ElementDefinition>> mapCache, String specPath, String versionToAnnotate, List<RelatedIG> relatedIgs) {
-    super(context, corePath, sd, destDir, igp, maps, allTargets, markdownEngine, packge, gen, versionToAnnotate, relatedIgs);
+  public StructureDefinitionRenderer(IWorkerContext context, String packageId, String corePath, StructureDefinition sd, String destDir, IGKnowledgeProvider igp, List<SpecMapManager> maps, Set<String> allTargets, MarkDownProcessor markdownEngine, NpmPackage packge, List<FetchedFile> files, RenderingContext gen, boolean allInvariants,Map<String, Map<String, ElementDefinition>> mapCache, String specPath, String versionToAnnotate, List<RelatedIG> relatedIgs, ReferenceResolver resolver) {
+    super(context, corePath, sd, destDir, igp, maps, allTargets, markdownEngine, packge, gen, versionToAnnotate, relatedIgs, resolver);
     this.packageId = packageId;
     this.sd = sd;
     this.destDir = destDir;
@@ -993,7 +997,7 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
         src = vs.getUserString(UserDataNames.render_external_link);
         link = vs.getUserString(UserDataNames.render_external_link);
         try {
-          src = new URL(src).getHost();
+          src = URI.create(src).toURL().getHost();
         } catch (Exception e) {
           // nothing
         }
@@ -1125,7 +1129,7 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
       // 'primary' indicates if this is the initial definition of the constraint or if it's a subsequently profiled
       // version of the constraint.  The logic here could probably use some work, but all it does is make sure the
       // 'official' one comes first, so it's not critical that there are issues.
-      if (!c.hasSource() || c.getSource().equals(sd.getUrl()) || (c.getSource().startsWith("http://hl7.org/fhir/StructureDefinition/") && !c.getSource().substring(41).contains("/"))) {
+      if (isOwnInvariant(c) || (c.getSource().startsWith("http://hl7.org/fhir/StructureDefinition/") && !c.getSource().substring(41).contains("/"))) {
         if (primary == null) {
           primary = variations.get(constraintHash(c));
           if (primary==null)
@@ -1190,6 +1194,28 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
     }
   }
 
+  /**
+   * True when a constraint belongs to this profile itself (i.e. it is not inherited from a base
+   * definition), so it must still be shown when inherited invariants are suppressed
+   * (show-inherited-invariants:false). A constraint with no source, or whose source matches this
+   * profile's canonical url - ignoring any |version suffix that pin-canonicals may append - is "own".
+   */
+  private boolean isOwnInvariant(ElementDefinitionConstraintComponent c) {
+    return !c.hasSource() || sameCanonical(c.getSource(), sd.getUrl());
+  }
+
+  private static boolean sameCanonical(String a, String b) {
+    return unversionedUrl(a).equals(unversionedUrl(b));
+  }
+
+  private static String unversionedUrl(String u) {
+    if (u == null) {
+      return "";
+    }
+    int i = u.indexOf('|');
+    return i >= 0 ? u.substring(0, i) : u;
+  }
+
   public List<ElementDefinition> elementsForMode(int genMode) {
     switch (genMode) {
     case GEN_MODE_DIFF:
@@ -1241,7 +1267,7 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
         ConstraintInfo ci = constraintMap.get(key);
         for (ConstraintVariation cv : ci.getVariations()) {
           ElementDefinitionConstraintComponent inv = cv.getConstraint();
-          if (!inv.hasSource() || inv.getSource().equals(sd.getUrl()) || allInvariants || genMode!=GEN_MODE_DIFF ) {
+          if (isOwnInvariant(inv) || allInvariants) {
             tr = tbl.tr();
             tr.td().tx(inv.getKey());
             tr.td().tx(grade(inv));
@@ -1335,17 +1361,17 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
       }
     }
     XhtmlNode intTable = sdr.generateTable(new RenderingStatus(), defnFile, sd, false, destDir, false, sd.getId(), true, corePath, "", sd.getKind() == StructureDefinitionKind.LOGICAL, false, 
-        outputTracker, false, gen, ANCHOR_PREFIX_MAP, resE, "M");
+        outputTracker, false, gen.withUniqueLocalPrefix(ANCHOR_PREFIX_MAP_I), ANCHOR_PREFIX_MAP_I, resE, "M");
 
     sdr.setMappingsMode(MapStructureMode.NOT_IN_LIST);
 
     XhtmlNode extTable = sdr.generateTable(new RenderingStatus(), defnFile, sd, false, destDir, false, sd.getId(), true, corePath, "", sd.getKind() == StructureDefinitionKind.LOGICAL, false, 
-        outputTracker, false, gen, ANCHOR_PREFIX_MAP, resE, "M");
+        outputTracker, false, gen.withUniqueLocalPrefix(ANCHOR_PREFIX_MAP_E), ANCHOR_PREFIX_MAP_E, resE, "M");
 
     sdr.setMappingsMode(MapStructureMode.OTHER);
 
     XhtmlNode otherTable = sdr.generateTable(new RenderingStatus(), defnFile, sd, false, destDir, false, sd.getId(), true, corePath, "", sd.getKind() == StructureDefinitionKind.LOGICAL, false, 
-        outputTracker, false, gen, ANCHOR_PREFIX_MAP, resE, "M");
+        outputTracker, false, gen.withUniqueLocalPrefix(ANCHOR_PREFIX_MAP_O), ANCHOR_PREFIX_MAP_O, resE, "M");
 
     if (intTable == null && extTable == null && otherTable == null) {
       return "<p>"+sdr.getContext().formatPhrase(RenderingI18nContext.STRUC_DEF_NO_MAPPINGS)+"</p>";
@@ -2254,7 +2280,7 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
     }
   }
   
-  public String references(String lang, RenderingContext lrc) throws FHIRFormatError, IOException {
+  public String references(String lang, RenderingContext lrc) throws FHIRFormatError, IOException, EOperationOutcome {
     
     Map<String, String> base = new HashMap<>();
     Map<String, String> invoked = new HashMap<>();
@@ -2475,7 +2501,9 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
         b.append("</table>\r\n");
       }
     }
-    return b.toString()+changeSummary();
+    XhtmlNode x = sdr.compositionSummary(sd);
+    String dc = x == null ? "" : x.toString();
+    return b.toString()+changeSummary()+dc;
   }
 
   private String nn(String s) {
@@ -3171,7 +3199,10 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
     Map<String, SearchParameter> splist = new HashMap<>();
     for (SearchParameter sp : context.fetchResourcesByType(SearchParameter.class)) {
       if (hasBase(sp, sd.getType())) {
-        splist.put(sp.getCode(), sp);
+        SearchParameter existing = splist.get(sp.getCode());
+        if (existing == null || isPreferredSP(sp, existing)) {
+          splist.put(sp.getCode(), sp);
+        }
       }
     }
     XhtmlNode div = new XhtmlNode(NodeType.Element, "div");
@@ -3191,6 +3222,18 @@ public class StructureDefinitionRenderer extends CanonicalRenderer {
       tr.td().code(sp.getExpression());
     }
     return new XhtmlComposer(false, true).compose(div.getChildNodes());
+  }
+
+  private boolean isPreferredSP(SearchParameter candidate, SearchParameter existing) {
+    // two search parameters with the same code apply to this resource type (e.g. the core spec's
+    // multi-base 'Multiple Resources' parameter and an IG-specific one). Prefer the one defined
+    // in the IG being built; otherwise prefer the more specific one (fewer bases)
+    boolean cLocal = candidate.hasSourcePackage() && candidate.getSourcePackage().getId().equals(packageId);
+    boolean eLocal = existing.hasSourcePackage() && existing.getSourcePackage().getId().equals(packageId);
+    if (cLocal != eLocal) {
+      return cLocal;
+    }
+    return candidate.getBase().size() < existing.getBase().size();
   }
 
   private boolean hasBase(SearchParameter sp, String type) {

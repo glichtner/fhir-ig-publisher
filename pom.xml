@@ -4,11 +4,11 @@
 
     <groupId>org.hl7.fhir.publisher</groupId>
     <artifactId>org.hl7.fhir.publisher</artifactId>
-    <version>2.2.8-SNAPSHOT</version>
+    <version>2.3.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <properties>
-        <core_version>6.9.8-SNAPSHOT</core_version>
+        <core_version>6.10.1-SNAPSHOT</core_version>
         <maven_surefire_version>3.0.0-M5</maven_surefire_version>
         <apache_poi_version>5.4.1</apache_poi_version>
         <commons_io_version>2.17.0</commons_io_version>
@@ -23,10 +23,10 @@
         <maven.compiler.testRelease>17</maven.compiler.testRelease>
         <maven.compiler.testSource>17</maven.compiler.testSource>
         <maven.compiler.testTarget>17</maven.compiler.testTarget>
-        <logback.version>1.5.25</logback.version>
-        <log4jVersion>2.25.3</log4jVersion>
-        <jackson_version>2.21.1</jackson_version>
-        <jackson_annotations_version>2.21</jackson_annotations_version>
+        <logback.version>1.5.37</logback.version>
+        <log4jVersion>2.26.1</log4jVersion>
+        <jackson_version>2.22.1</jackson_version>
+        <jackson_annotations_version>2.22</jackson_annotations_version>
         <nedap-healthcare-archie.version>3.16.0</nedap-healthcare-archie.version>
     </properties>
 
@@ -167,6 +167,26 @@
                 <version>${okhttp.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.thrift</groupId>
+                <artifactId>libthrift</artifactId>
+                <version>0.23.0</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-api</artifactId>
+                <version>1.62.0</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-context</artifactId>
+                <version>1.62.0</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry.instrumentation</groupId>
+                <artifactId>opentelemetry-instrumentation-annotations</artifactId>
+                <version>2.27.0</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

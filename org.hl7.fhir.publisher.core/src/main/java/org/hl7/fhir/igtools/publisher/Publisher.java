@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Path;
@@ -65,23 +66,12 @@ import org.hl7.fhir.r5.elementmodel.Element;
 import org.hl7.fhir.r5.elementmodel.ElementVisitor;
 import org.hl7.fhir.r5.elementmodel.Manager.FhirFormat;
 import org.hl7.fhir.r5.extensions.*;
-import org.hl7.fhir.r5.model.ActorDefinition;
-import org.hl7.fhir.r5.model.CanonicalResource;
-import org.hl7.fhir.r5.model.CanonicalType;
-import org.hl7.fhir.r5.model.CodeSystem;
-import org.hl7.fhir.r5.model.Constants;
-import org.hl7.fhir.r5.model.DateTimeType;
-import org.hl7.fhir.r5.model.ElementDefinition;
+import org.hl7.fhir.r5.model.*;
 import org.hl7.fhir.r5.model.ElementDefinition.TypeRefComponent;
 import org.hl7.fhir.r5.model.Enumerations.CodeSystemContentMode;
-import org.hl7.fhir.r5.model.Extension;
 import org.hl7.fhir.r5.model.ImplementationGuide.ImplementationGuideDefinitionResourceComponent;
 import org.hl7.fhir.r5.model.ImplementationGuide.ImplementationGuideGlobalComponent;
 import org.hl7.fhir.r5.model.Parameters.ParametersParameterComponent;
-import org.hl7.fhir.r5.model.Resource;
-import org.hl7.fhir.r5.model.StructureDefinition;
-import org.hl7.fhir.r5.model.UriType;
-import org.hl7.fhir.r5.model.ValueSet;
 import org.hl7.fhir.r5.model.ValueSet.ConceptSetComponent;
 import org.hl7.fhir.r5.renderers.utils.RenderingContext;
 import org.hl7.fhir.r5.renderers.utils.RenderingContext.IResourceLinkResolver;
@@ -117,6 +107,8 @@ import org.hl7.fhir.utilities.xhtml.HierarchicalTableGenerator;
 import org.hl7.fhir.utilities.xhtml.XhtmlNode;
 import org.hl7.fhir.validation.SQLiteINpmPackageIndexBuilderDBImpl;
 import org.hl7.fhir.validation.instance.utils.ValidationContext;
+
+import static org.hl7.fhir.igtools.publisher.CliParams.SSRF_PROTECTION_ENABLED_PARAM;
 
 /**
  * Implementation Guide Publisher
@@ -197,6 +189,7 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
 
   public void execute() throws Exception {
     XhtmlNode.setCheckParaGeneral(true);
+    Configuration.setAllowCustomResourceTypes(true);
 
     String rootDir = settings.getConfigFile();
     FileChangeMonitor monitor = null;
@@ -309,7 +302,7 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
       File od = new File(pf.outputDir);
       FileUtils.cleanDirectory(od);
       pf.npm = new NPMPackageGenerator(Utilities.path(pf.outputDir, "package.tgz"), pf.templateInfo, pf.getExecTime().getTime(), !settings.isPublishing());
-      pf.npm.loadFiles(pf.rootDir, null, new File(pf.rootDir), ".git", "output", "package", "temp");
+      pf.npm.loadFiles(pf.rootDir, ".npmignore", new File(pf.rootDir), ".git", "output", "package", "temp");
       pf.npm.finish();
 
       FileUtilities.stringToFile(makeTemplateIndexPage(), Utilities.path(pf.outputDir, "index.html"));
@@ -440,8 +433,8 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
       deleteDuplicateMessages();
       ValidationPresenter val = new ValidationPresenter(pf.version, workingVersion(), pf.igpkp, pf.childPublisher == null? null : pf.childPublisher.getIgpkp(), pf.rootDir, pf.npmName, pf.childPublisher == null? null : pf.childPublisher.pf.npmName,
           IGVersionUtil.getVersion(), fetchCurrentIGPubVersion(), pf.realmRules, pf.previousVersionComparator, pf.ipaComparator, pf.ipsComparator,
-          new DependencyRenderer(pf.pcm, pf.outputDir, pf.npmName, pf.templateManager, pf.dependencyList, pf.context, pf.markdownEngine, pf.rc, pf.specMaps).render(pf.publishedIg, true, false, false), new HTAAnalysisRenderer(pf.context, pf.outputDir, pf.markdownEngine).render(pf.packageId(), pf.fileList, pf.publishedIg.present()),
-          new PublicationChecker(pf.repoRoot, pf.historyPage, pf.markdownEngine, findReleaseLabelString(), pf.publishedIg, pf.relatedIGs).check(), renderGlobals(), pf.copyrightYear, pf.context, scanForR5Extensions(), pf.modifierExtensions,
+          new DependencyRenderer(pf.pcm, pf.outputDir, pf.npmName, pf.templateManager, pf.dependencyList, pf.context, pf.markdownEngine, pf.rc, pf.specMaps).render(pf.getEffectiveBaseIg(), true, false, false), new HTAAnalysisRenderer(pf.context, pf.outputDir, pf.markdownEngine).render(pf.packageId(), pf.fileList, pf.publishedIg.present()),
+          new PublicationChecker(pf.repoRoot, pf.historyPage, pf.markdownEngine, findReleaseLabelString(), pf.getEffectiveBaseIg(), pf.relatedIGs).check(), renderGlobals(), pf.copyrightYear, pf.context, scanForR5Extensions(), pf.modifierExtensions,
           generateDraftDependencies(), pf.noNarrativeResources, pf.noValidateResources, settings.isValidationOff(), settings.isGenerationOff(), pf.dependentIgFinder, pf.context.getTxClientManager(),
           fragments, makeLangInfo(), pf.relatedIGs);
       val.setValidationFlags(pf.hintAboutNonMustSupport, pf.anyExtensionsAllowed, pf.checkAggregation, pf.autoLoad, pf.showReferenceMessages, pf.noExperimentalContent, pf.displayWarnings);
@@ -1135,7 +1128,7 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
 
 
   private void download(String address, String filename) throws IOException {
-    URL url = new URL(address);
+    URL url = URI.create(address).toURL();
     URLConnection c = url.openConnection();
     InputStream s = c.getInputStream();
     FileOutputStream f = new FileOutputStream(filename);
@@ -1218,14 +1211,16 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
     org.hl7.fhir.utilities.FileFormat.checkCharsetAndWarnIfNotUTF8(System.out);
 
     NpmPackage.setLoadCustomResources(true);
-    if (CliParams.hasNamedParam(args, FHIR_SETTINGS_PARAM)) {
-      FhirSettings.setExplicitFilePath(CliParams.getNamedParam(args, FHIR_SETTINGS_PARAM));
-    }
-    ManagedWebAccess.loadFromFHIRSettings();
+    applyFhirSettingsAndCliOverrides(args);
+    TerminologyClientContext.setCanUseCacheId(true);
 
     if (CliParams.hasNamedParam(args, "-produce-translator-ids")) {
       I18nBase.setUseMessageIdsDirectly(true);
     }
+
+    // Install any editor-supplied PO overlays before message bundles or the
+    // validation engine load — they latch on first access. 
+    TranslationOverrideArgs.applyIfRequested(args);
 
     if (CliParams.hasNamedParam(args, "-gui")) {
       IGPublisherUI.main(args);
@@ -1273,7 +1268,7 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
       System.out.println("  see Wiki for Documentation");
       System.out.println("");
       System.out.println("-tx: (optional) Address to use for terminology server ");
-      System.out.println("  (default is http://tx.fhir.org)");
+      System.out.println("  (default is https://tx.fhir.org)");
       System.out.println("  use 'n/a' to run without a terminology server");
       System.out.println("");
       System.out.println("-no-network: (optional) Stop the IG publisher accessing the network");
@@ -1286,6 +1281,13 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
       System.out.println("");
       System.out.println("-packages: a directory to load packages (*.tgz) from before resolving dependencies");
       System.out.println("           this parameter can be present multiple times");
+      System.out.println("");
+      System.out.println("-po: (optional) Load translations from a .po file at runtime. Repeatable.");
+      System.out.println("     Overrides shipped properties for the bundle+locale derived from the filename");
+      System.out.println("     (e.g. validator-messages-de.po, rendering-phrases-pt_BR.po).");
+      System.out.println("-po-dir: (optional) Load every .po file under the given directory. Repeatable.");
+      System.out.println("-po-stale-handling: (optional, default 'include') include|exclude|warn — how to");
+      System.out.println("     treat translations whose English source has drifted from the shipped jar.");
       System.out.println("");
       System.out.println("The most important output from the publisher is qa.html");
       System.out.println("");
@@ -1627,6 +1629,26 @@ public class Publisher extends PublisherBase implements IReferenceResolver, IVal
     }
     if (!CliParams.hasNamedParam(args, "-no-exit")) {
       System.exit(exitCode);
+    }
+  }
+
+  /**
+   * Sets the appropriate locations for fhir-settings.json and then, in sequence:
+   *  * loads appropriate settings from the json
+   *  * overrides any settings that can be set via CLI params.
+   *
+   * @param args the CLI param args
+   */
+  private static void applyFhirSettingsAndCliOverrides(String[] args) {
+    if (CliParams.hasNamedParam(args, FHIR_SETTINGS_PARAM)) {
+      FhirSettings.setExplicitFilePath(CliParams.getNamedParam(args, FHIR_SETTINGS_PARAM));
+    }
+    ManagedWebAccess.loadFromFHIRSettings();
+    if (CliParams.hasNamedParam(args, SSRF_PROTECTION_ENABLED_PARAM)) {
+      String ssrfProtectionEnabled = CliParams.getNamedParam(args, SSRF_PROTECTION_ENABLED_PARAM);
+      if ("false".equalsIgnoreCase(ssrfProtectionEnabled)) {
+        ManagedWebAccess.setSsrfProtectionEnabled(false);
+      }
     }
   }
 
