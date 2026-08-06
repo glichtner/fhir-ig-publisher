@@ -37,7 +37,7 @@ jobs:
           AHEAD=$(git rev-list --count upstream/${UPSTREAM_BRANCH}..HEAD)
           echo "behind=$BEHIND" >> $GITHUB_OUTPUT
           echo "ahead=$AHEAD" >> $GITHUB_OUTPUT
-          echo "Behind upstream by $BEHIND, ahead by $AHEAD (our ballot4 patches)."
+          echo "Behind upstream by $BEHIND, ahead by $AHEAD (our patches)."
 
       - name: Open sync PR (if behind)
         if: steps.check.outputs.behind != '0'

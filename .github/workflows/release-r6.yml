@@ -1,4 +1,10 @@
-name: Release ballot4 IG Publisher
+name: Release R6 IG Publisher
+
+# Builds the IG Publisher CLI against the patched core jars published by the
+# glichtner/org.hl7.fhir.core release workflow (tag prefix r5-${R6_LABEL}-),
+# and publishes it as a GitHub release tagged ${R6_LABEL}-<timestamp>.
+# The CLI jar is also attached under the stable name publisher.jar so that
+# consumers can use .../releases/latest/download/publisher.jar.
 
 on:
   push:
@@ -7,7 +13,7 @@ on:
       - 'org.hl7.fhir.publisher.core/**'
       - 'org.hl7.fhir.publisher.cli/**'
       - 'pom.xml'
-      - '.github/workflows/release-ballot4.yml'
+      - '.github/workflows/release-r6.yml'
   workflow_dispatch:
     inputs:
       core_tag:
@@ -17,6 +23,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  R6_LABEL: ballot5
 
 jobs:
   release:
@@ -52,10 +61,10 @@ jobs:
             TAG="${{ inputs.core_tag }}"
           else
             TAG=$(gh release list --repo glichtner/org.hl7.fhir.core --limit 50 --json tagName,name \
-                  --jq '.[] | select(.tagName | startswith("r5-ballot4-")) | .tagName' | head -1)
+                  --jq '.[] | select(.tagName | startswith("r5-'"${R6_LABEL}"'-")) | .tagName' | head -1)
           fi
           if [ -z "$TAG" ]; then
-            echo "::error::No core ballot4 release found on glichtner/org.hl7.fhir.core."
+            echo "::error::No core ${R6_LABEL} release found on glichtner/org.hl7.fhir.core."
             exit 1
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -68,7 +77,7 @@ jobs:
           mkdir -p /tmp/core-jars
           gh release download "${{ steps.coretag.outputs.tag }}" \
             --repo glichtner/org.hl7.fhir.core \
-            --pattern '*.jar' \
+            --pattern 'org.hl7.fhir.*.jar' \
             --dir /tmp/core-jars
           ls -la /tmp/core-jars/
 
@@ -79,7 +88,7 @@ jobs:
           for m in org.hl7.fhir.utilities org.hl7.fhir.r4 org.hl7.fhir.r4b org.hl7.fhir.r5 org.hl7.fhir.convertors org.hl7.fhir.validation; do
             JAR="/tmp/core-jars/${m}-${V}.jar"
             if [ ! -f "$JAR" ]; then
-              echo "::error::Missing $JAR — release does not contain it."
+              echo "::error::Missing $JAR — release does not contain it (check that <core_version> in pom.xml matches the core release version)."
               exit 1
             fi
             mvn install:install-file --no-transfer-progress \
@@ -90,8 +99,12 @@ jobs:
               -Dpackaging=jar
           done
 
+      # -nsu (--no-snapshot-updates) is essential: upstream publishes real
+      # SNAPSHOT jars of the same version to the Sonatype snapshot repo, and
+      # without it Maven could silently replace our locally installed fork
+      # jars with upstream's.
       - name: Build IG Publisher
-        run: mvn clean package -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
+        run: mvn -nsu clean package -DskipTests -Dmaven.javadoc.skip=true --no-transfer-progress
 
       - name: Identify CLI jar
         id: jar
@@ -100,20 +113,21 @@ jobs:
                 | grep -vE 'sources|javadoc|original-' | head -1)
           echo "path=$JAR" >> $GITHUB_OUTPUT
           echo "name=$(basename "$JAR")" >> $GITHUB_OUTPUT
+          cp "$JAR" /tmp/publisher.jar
           ls -la "$JAR"
 
       - name: Build release tag
         id: tag
         run: |
           STAMP=$(date -u +%Y%m%d-%H%M%S)
-          TAG="ballot4-${STAMP}"
+          TAG="${R6_LABEL}-${STAMP}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "stamp=$STAMP" >> $GITHUB_OUTPUT
 
       - name: Write release notes
         run: |
           cat > /tmp/notes.md <<EOF
-          # IG Publisher with R6 ballot4 support
+          # IG Publisher with R6 ${{ env.R6_LABEL }} support
 
           Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`
           Project version: \`${{ steps.ver.outputs.igp_version }}\`
@@ -122,21 +136,26 @@ jobs:
           ## Run
 
           \`\`\`bash
-          java -jar ${{ steps.jar.outputs.name }} -ig /path/to/ig.ini
+          java -jar publisher.jar -ig /path/to/ig.ini
           \`\`\`
 
           ## What this fork adds
-          - Allows \`6.0.0-ballot4\` in PublisherIGLoader version whitelist
+          - Allows \`6.0.0-ballot4\` and \`6.0.0-ballot5\` in the PublisherIGLoader version whitelist
           - Null-safe StructureDefinitionRenderer for profiles whose base type doesn't resolve
-          - Consumes the R5 core jars with ballot4 spec deltas applied
+          - Consumes the R5 core jars with R6 ballot spec deltas applied
+
+          The jar is attached both under its Maven name and as \`publisher.jar\`
+          (stable URL: \`releases/latest/download/publisher.jar\`).
           EOF
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: IG Publisher ballot4 ${{ steps.tag.outputs.stamp }}
+          name: IG Publisher ${{ env.R6_LABEL }} ${{ steps.tag.outputs.stamp }}
           body_path: /tmp/notes.md
-          files: ${{ steps.jar.outputs.path }}
+          files: |
+            ${{ steps.jar.outputs.path }}
+            /tmp/publisher.jar
           draft: false
           prerelease: false
