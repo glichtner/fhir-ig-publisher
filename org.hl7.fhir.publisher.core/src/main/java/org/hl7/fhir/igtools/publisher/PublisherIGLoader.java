@@ -318,8 +318,8 @@ public class PublisherIGLoader extends PublisherBase {
 //    if (VersionUtilities.isR2Ver(pf.version) || VersionUtilities.isR2Ver(pf.version)) {
 //      throw new Error("As of the end of 2024, the FHIR  R2 (version "+ pf.version +") is no longer supported by the IG Publisher");
 //    }
-    if (!Utilities.existsInList(pf.version, "5.0.0", "4.3.0", "4.0.1", "3.0.2", "1.0.2", "6.0.0-ballot3", "6.0.0-ballot4")) {
-      throw new Error("Unable to support version '"+ pf.version +"' - must be one of 5.0.0, 4.3.0, 4.0.1, 3.0.2, 1.0.2, 6.0.0-ballot3 or 6.0.0-ballot4");
+    if (!Utilities.existsInList(pf.version, "5.0.0", "4.3.0", "4.0.1", "3.0.2", "1.0.2", "6.0.0-ballot3", "6.0.0-ballot4", "6.0.0-ballot5")) {
+      throw new Error("Unable to support version '"+ pf.version +"' - must be one of 5.0.0, 4.3.0, 4.0.1, 3.0.2, 1.0.2, 6.0.0-ballot3, 6.0.0-ballot4 or 6.0.0-ballot5");
     }
 
     if (!VersionUtilities.isSupportedVersion(pf.version)) {
