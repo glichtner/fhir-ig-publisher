@@ -30,7 +30,8 @@ prepare_repository() {
   git -C "$directory" checkout --quiet -b patched-build refs/remotes/upstream/master
   local branch
   for branch in "$@"; do
-    git -C "$directory" fetch --no-tags --filter=blob:none fixes \
+    # Fetch fix blobs too: new fork-only objects need not exist on upstream.
+    git -C "$directory" fetch --no-tags fixes \
       "+refs/heads/$branch:refs/remotes/fixes/$branch"
     # Never guess a conflict resolution. Any conflict fails before publication.
     git -C "$directory" merge --no-ff --no-edit "refs/remotes/fixes/$branch"
