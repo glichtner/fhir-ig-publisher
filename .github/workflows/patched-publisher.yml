@@ -1,0 +1,83 @@
+name: Patched Publisher nightly
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [master, ci/patched-publisher-nightly]
+    paths:
+      - .github/workflows/patched-publisher.yml
+      - .github/scripts/build-patched-publisher.sh
+      - .github/scripts/verify-patched-publisher.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: patched-publisher
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'glichtner/fhir-ig-publisher'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Build upstream Publisher with all three fixes
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/patched-publisher
+          DIST_DIR: ${{ github.workspace }}/dist
+          MAVEN_OPTS: -Xmx2g
+        run: bash .github/scripts/build-patched-publisher.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-publisher
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-publisher-tests
+          path: |
+            ${{ runner.temp }}/patched-publisher/core/**/target/surefire-reports/
+            ${{ runner.temp }}/patched-publisher/publisher/**/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-publisher
+          path: dist
+      - name: Publish a new release and update the latest download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check publisher.jar.sha256
+          tag="patched-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" publisher.jar publisher.jar.sha256 build-info.json \
+            --target "$GITHUB_SHA" --draft --latest=false \
+            --title "Patched Publisher $tag" --notes-file release-notes.md
+          # Publish only after every asset has been uploaded successfully.
+          gh release edit "$tag" --draft=false --latest
