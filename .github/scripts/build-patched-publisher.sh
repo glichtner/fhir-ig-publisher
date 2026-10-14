@@ -60,7 +60,7 @@ cd "$build_root/core"
 # Build only modules needed by the Publisher and their reactor dependencies.
 # Run the fix regressions and neighboring R6 profile tests in that same reactor.
 "${maven[@]}" -pl org.hl7.fhir.validation,org.hl7.fhir.standalone -am \
-  '-Dtest=ProfileUtilities*Test,SnapShotGenerationTests' \
+  '-Dtest=org.hl7.fhir.conformance.profile.ProfileUtilities*Test,org.hl7.fhir.test.SnapShotGenerationTests' \
   -Dsurefire.failIfNoSpecifiedTests=false install
 core_version="$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("pom.xml").getroot().find("{*}version").text)')"
 
